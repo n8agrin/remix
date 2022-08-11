@@ -5,9 +5,9 @@ import {
   PR_FILES_STARTS_WITH,
   NIGHTLY_BRANCH,
   DEFAULT_BRANCH,
-  PACKAGE_VERSION_TO_FOLLOW,
   OWNER,
   REPO,
+  PACKAGE_VERSION_TO_FOLLOW,
 } from "./constants";
 import { gql, graphqlWithAuth, octokit } from "./octokit";
 import type { MinimalTag } from "./utils";
@@ -32,8 +32,16 @@ export async function prsMergedSinceLastTag(
     githubRef
   );
 
+  /**
+    nightly > nightly => 'dev'
+    nightly > stable => 'main'
+    stable > nightly => 'dev'
+  */
   let prs: Awaited<ReturnType<typeof getMergedPRsBetweenTags>> = [];
 
+  // if both the current and previous tags are prereleases
+  // we can just get the PRs for the "dev" branch
+  // but if one of them is stable, we should wind up all of them from both the main and dev branches
   if (currentTag.isPrerelease && previousTag.isPrerelease) {
     prs = await getMergedPRsBetweenTags(
       previousTag,
@@ -82,15 +90,6 @@ async function getPullRequestWithFiles(
     return pr.files.some((file) => {
       return checkIfStringStartsWith(file.filename, PR_FILES_STARTS_WITH);
     });
-  });
-}
-
-function filterTags(tags: Array<Tag>) {
-  return tags.filter((tag) => {
-    if (PACKAGE_VERSION_TO_FOLLOW) {
-      return tag.ref.startsWith(`refs/tags/${PACKAGE_VERSION_TO_FOLLOW}`);
-    }
-    return true;
   });
 }
 
@@ -143,12 +142,11 @@ async function getPreviousTagFromCurrentTag(currentTag: string): Promise<{
     {
       owner: OWNER,
       repo: REPO,
-      ref: isPrerelease ? "v0.0.0-nightly-" : `remix`,
+      ref: isPrerelease ? "v0.0.0-nightly-" : PACKAGE_VERSION_TO_FOLLOW,
     }
   );
 
-  let validTags = filterTags(tags);
-  let tagCommitPromises = validTags.map((tag) => getCommitFromTag(tag));
+  let tagCommitPromises = tags.map((tag) => getCommitFromTag(tag));
   let validTagsWithCommit = await Promise.all(tagCommitPromises);
   let minimalTags = createMinimalTags(validTagsWithCommit);
   let tmpCurrentTagIndex = minimalTags.findIndex((tag) => {
@@ -256,7 +254,7 @@ export async function getIssuesClosedByPullRequests(
    * https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue#linking-a-pull-request-to-an-issue-using-a-keyword
    */
   let regex =
-    /(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)\s#([0-9]+)/gi;
+    /(close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)(:)?\s#([0-9]+)/gi;
   let matches = prBody.match(regex);
   if (!matches) return linkedIssues.map((issue) => issue.number);
 

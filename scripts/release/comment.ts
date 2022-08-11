@@ -1,4 +1,4 @@
-import { VERSION, OWNER, REPO, PR_FILES_STARTS_WITH } from "./constants";
+import { VERSION, PR_FILES_STARTS_WITH } from "./constants";
 import {
   commentOnIssue,
   commentOnPullRequest,
