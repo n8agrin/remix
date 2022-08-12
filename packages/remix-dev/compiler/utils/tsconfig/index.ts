@@ -1,19 +1,12 @@
 import tsConfigPaths from "tsconfig-paths";
 
-import { writeConfigDefaults } from "./write-config-defaults";
+export function createMatchPath(tsconfigPath: string | undefined) {
+  let configLoaderResult = tsConfigPaths.loadConfig(tsconfigPath);
+  console.log("debug: ", { configLoaderResult });
 
-export function createMatchPath() {
-  let configLoaderResult = tsConfigPaths.loadConfig();
   if (configLoaderResult.resultType === "failed") {
-    if (configLoaderResult.message === "Missing baseUrl in compilerOptions") {
-      throw new Error(
-        `🚨 Oops! No baseUrl found, please set compilerOptions.baseUrl in your tsconfig or jsconfig`
-      );
-    }
-    return undefined;
+    throw new Error(`🚨 Oops! ${configLoaderResult.message}`);
   }
-
-  writeConfigDefaults(configLoaderResult.configFileAbsolutePath);
 
   return tsConfigPaths.createMatchPath(
     configLoaderResult.absoluteBaseUrl,

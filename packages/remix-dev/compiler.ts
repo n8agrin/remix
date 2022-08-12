@@ -388,6 +388,7 @@ async function createBrowserBuild(
       ),
     },
     plugins,
+    tsconfig: config.tsconfigPath,
   });
 }
 
@@ -476,6 +477,7 @@ function createServerBuild(
         ),
       },
       plugins,
+      tsconfig: config.tsconfigPath,
     })
     .then(async (build) => {
       await writeServerBuildResult(config, build.outputFiles);
