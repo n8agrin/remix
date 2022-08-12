@@ -20,6 +20,8 @@ import {
   useResolvedPath,
 } from "react-router-dom";
 import type { LinkProps, NavLinkProps } from "react-router-dom";
+import type { Merge } from "type-fest";
+import { createPath } from "history";
 
 import type { AppData, FormEncType, FormMethod } from "./data";
 import type { EntryContext, AssetsManifest } from "./entry";
@@ -48,7 +50,12 @@ import type { RouteMatch as BaseRouteMatch } from "./routeMatching";
 import { matchClientRoutes } from "./routeMatching";
 import type { RouteModules, HtmlMetaDescriptor } from "./routeModules";
 import { createTransitionManager } from "./transition";
-import type { Transition, Fetcher, Submission } from "./transition";
+import type {
+  Transition,
+  TransitionManagerState,
+  Fetcher,
+  Submission,
+} from "./transition";
 
 ////////////////////////////////////////////////////////////////////////////////
 // RemixEntry
@@ -56,7 +63,7 @@ import type { Transition, Fetcher, Submission } from "./transition";
 interface RemixEntryContextType {
   manifest: AssetsManifest;
   matches: BaseRouteMatch<ClientRoute>[];
-  routeData: { [routeId: string]: RouteData };
+  routeData: RouteData;
   actionData?: RouteData;
   pendingLocation?: Location;
   appState: AppState;
@@ -116,19 +123,24 @@ export function RemixEntry({
       catch: entryComponentDidCatchEmulator.catch,
       catchBoundaryId: entryComponentDidCatchEmulator.catchBoundaryRouteId,
       onRedirect: _navigator.replace,
-      onChange: (state) => {
-        setClientState({
-          catch: state.catch,
-          error: state.error,
-          catchBoundaryRouteId: state.catchBoundaryId,
-          loaderBoundaryRouteId: state.errorBoundaryId,
-          renderBoundaryRouteId: null,
-          trackBoundaries: false,
-          trackCatchBoundaries: false,
-        });
-      },
     });
   });
+
+  React.useEffect(() => {
+    let subscriber = (state: TransitionManagerState) => {
+      setClientState({
+        catch: state.catch,
+        error: state.error,
+        catchBoundaryRouteId: state.catchBoundaryId,
+        loaderBoundaryRouteId: state.errorBoundaryId,
+        renderBoundaryRouteId: null,
+        trackBoundaries: false,
+        trackCatchBoundaries: false,
+      });
+    };
+
+    return transitionManager.subscribe(subscriber);
+  }, [transitionManager]);
 
   // Ensures pushes interrupting pending navigations use replace
   // TODO: Move this to React Router
@@ -399,7 +411,7 @@ interface PrefetchHandlers {
 function usePrefetchBehavior(
   prefetch: PrefetchBehavior,
   theirElementProps: PrefetchHandlers
-) {
+): [boolean, Required<PrefetchHandlers>] {
   let [maybePrefetch, setMaybePrefetch] = React.useState(false);
   let [shouldPrefetch, setShouldPrefetch] = React.useState(false);
   let { onFocus, onBlur, onMouseEnter, onMouseLeave, onTouchStart } =
@@ -718,7 +730,7 @@ export function Meta() {
         }
 
         if (name === "title") {
-          return <title key="title">{value}</title>;
+          return <title key="title">{String(value)}</title>;
         }
 
         // Open Graph tags use the `property` attribute, while other meta tags
@@ -933,7 +945,7 @@ let FormImpl = React.forwardRef<HTMLFormElement, FormImplProps>(
       reloadDocument = false,
       replace = false,
       method = "get",
-      action = ".",
+      action,
       encType = "application/x-www-form-urlencoded",
       fetchKey,
       onSubmit,
@@ -988,20 +1000,31 @@ type HTMLFormSubmitter = HTMLButtonElement | HTMLInputElement;
  * @see https://remix.run/api/remix#useformaction
  */
 export function useFormAction(
-  action = ".",
+  action?: string,
   // TODO: Remove method param in v2 as it's no longer needed and is a breaking change
   method: FormMethod = "get"
 ): string {
   let { id } = useRemixRouteContext();
-  let path = useResolvedPath(action);
-  let search = path.search;
-  let isIndexRoute = id.endsWith("/index");
+  let resolvedPath = useResolvedPath(action ?? ".");
 
-  if (action === "." && isIndexRoute) {
+  // Previously we set the default action to ".". The problem with this is that
+  // `useResolvedPath(".")` excludes search params and the hash of the resolved
+  // URL. This is the intended behavior of when "." is specifically provided as
+  // the form action, but inconsistent w/ browsers when the action is omitted.
+  // https://github.com/remix-run/remix/issues/927
+  let location = useLocation();
+  let { search, hash } = resolvedPath;
+  if (action == null) {
+    search = location.search;
+    hash = location.hash;
+  }
+
+  let isIndexRoute = id.endsWith("/index");
+  if ((action == null || action === ".") && isIndexRoute) {
     search = search ? search.replace(/^\?/, "?index&") : "?index";
   }
 
-  return path.pathname + search;
+  return createPath({ pathname: resolvedPath.pathname, search, hash });
 }
 
 export interface SubmitOptions {
@@ -1138,7 +1161,7 @@ export function useSubmitImpl(key?: string): SubmitFunction {
 
         // Include name + value from a <button>
         if (target.name) {
-          formData.set(target.name, target.value);
+          formData.append(target.name, target.value);
         }
       } else {
         if (isHtmlElement(target)) {
@@ -1320,7 +1343,77 @@ export function useMatches(): RouteMatch[] {
  *
  * @see https://remix.run/api/remix#useloaderdata
  */
-export function useLoaderData<T = AppData>(): T {
+
+export type TypedResponse<T> = Response & {
+  json(): Promise<T>;
+};
+
+type DataFunction = (...args: any[]) => unknown; // matches any function
+type DataOrFunction = AppData | DataFunction;
+type JsonPrimitives =
+  | string
+  | number
+  | boolean
+  | String
+  | Number
+  | Boolean
+  | null;
+type NonJsonPrimitives = undefined | Function | symbol;
+
+type SerializeType<T> = T extends JsonPrimitives
+  ? T
+  : T extends NonJsonPrimitives
+  ? never
+  : T extends { toJSON(): infer U }
+  ? U
+  : T extends []
+  ? []
+  : T extends [unknown, ...unknown[]]
+  ? {
+      [k in keyof T]: T[k] extends NonJsonPrimitives
+        ? null
+        : SerializeType<T[k]>;
+    }
+  : T extends ReadonlyArray<infer U>
+  ? (U extends NonJsonPrimitives ? null : SerializeType<U>)[]
+  : T extends object
+  ? SerializeObject<UndefinedOptionals<T>>
+  : never;
+
+type SerializeObject<T> = {
+  [k in keyof T as T[k] extends NonJsonPrimitives ? never : k]: SerializeType<
+    T[k]
+  >;
+};
+
+/*
+ * For an object T, if it has any properties that are a union with `undefined`,
+ * make those into optional properties instead.
+ *
+ * Example: { a: string | undefined} --> { a?: string}
+ */
+type UndefinedOptionals<T extends object> = Merge<
+  {
+    // Property is not a union with `undefined`, keep as-is
+    [k in keyof T as undefined extends T[k] ? never : k]: T[k];
+  },
+  {
+    // Property _is_ a union with `defined`. Set as optional (via `?`) and remove `undefined` from the union
+    [k in keyof T as undefined extends T[k] ? k : never]?: Exclude<
+      T[k],
+      undefined
+    >;
+  }
+>;
+
+export type UseDataFunctionReturn<T extends DataOrFunction> = T extends (
+  ...args: any[]
+) => infer Output
+  ? Awaited<Output> extends TypedResponse<infer U>
+    ? SerializeType<U>
+    : SerializeType<Awaited<ReturnType<T>>>
+  : SerializeType<Awaited<T>>;
+export function useLoaderData<T = AppData>(): UseDataFunctionReturn<T> {
   return useRemixRouteContext().data;
 }
 
@@ -1329,7 +1422,9 @@ export function useLoaderData<T = AppData>(): T {
  *
  * @see https://remix.run/api/remix#useactiondata
  */
-export function useActionData<T = AppData>(): T | undefined {
+export function useActionData<T = AppData>():
+  | UseDataFunctionReturn<T>
+  | undefined {
   let { id: routeId } = useRemixRouteContext();
   let { transitionManager } = useRemixEntryContext();
   let { actionData } = transitionManager.getState();
@@ -1442,7 +1537,7 @@ export const LiveReload =
             suppressHydrationWarning
             dangerouslySetInnerHTML={{
               __html: js`
-                (() => {
+                function remixLiveReloadConnect(config) {
                   let protocol = location.protocol === "https:" ? "wss:" : "ws:";
                   let host = location.hostname;
                   let socketPath = protocol + "//" + host + ":" + ${String(
@@ -1460,11 +1555,27 @@ export const LiveReload =
                       window.location.reload();
                     }
                   };
+                  ws.onopen = () => {
+                    if (config && typeof config.onOpen === "function") {
+                      config.onOpen();
+                    }
+                  };
+                  ws.onclose = (error) => {
+                    console.log("Remix dev asset server web socket closed. Reconnecting...");
+                    setTimeout(
+                      () =>
+                        remixLiveReloadConnect({
+                          onOpen: () => window.location.reload(),
+                        }),
+                      1000
+                    );
+                  };
                   ws.onerror = (error) => {
                     console.log("Remix dev asset server web socket error:");
                     console.error(error);
                   };
-                })();
+                }
+                remixLiveReloadConnect();
               `,
             }}
           />

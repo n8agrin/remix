@@ -1,9 +1,9 @@
 import { execSync } from "child_process";
-import fse from "fs-extra";
-import os from "os";
-import path from "path";
+import * as os from "os";
+import * as path from "path";
 import { pathToFileURL } from "url";
 import stripAnsi from "strip-ansi";
+import * as fse from "fs-extra";
 import inquirer from "inquirer";
 import json5 from "json5";
 
@@ -189,6 +189,43 @@ describe("the create command", () => {
     expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
   });
 
+  it("fails for private GitHub username/repo combo without a token", async () => {
+    let projectDir = await getProjectDir("repo");
+    await expect(() =>
+      run([
+        "create",
+        projectDir,
+        "--template",
+        "private-org/private-repo",
+        "--no-install",
+        "--typescript",
+      ])
+    ).rejects.toMatchInlineSnapshot(
+      `[Error: 🚨 The template could not be verified. Please double check that the template is a valid GitHub repository and try again.]`
+    );
+  });
+
+  it("succeeds for private GitHub username/repo combo with a valid token", async () => {
+    let projectDir = await getProjectDir("repo");
+    await run([
+      "create",
+      projectDir,
+      "--template",
+      "private-org/private-repo",
+      "--no-install",
+      "--typescript",
+      "--token",
+      "valid-token",
+    ]);
+    expect(output.trim()).toBe(
+      getOptOutOfInstallMessage() +
+        "\n\n" +
+        getSuccessMessage(path.join("<TEMP_DIR>", "repo"))
+    );
+    expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
+    expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
+  });
+
   it("works for remote tarballs", async () => {
     let projectDir = await getProjectDir("remote-tarball");
     await run([
@@ -203,6 +240,45 @@ describe("the create command", () => {
       getOptOutOfInstallMessage() +
         "\n\n" +
         getSuccessMessage(path.join("<TEMP_DIR>", "remote-tarball"))
+    );
+    expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
+    expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
+  });
+
+  it("fails for private github release tarballs", async () => {
+    let projectDir = await getProjectDir("private-release-tarball");
+    await expect(() =>
+      run([
+        "create",
+        projectDir,
+        "--template",
+        "https://github.com/private-org/private-repo/releases/download/v0.0.1/stack.tar.gz",
+        "--no-install",
+        "--typescript",
+      ])
+    ).rejects.toMatchInlineSnapshot(
+      `[Error: 🚨 The template file could not be verified. Please double check the URL and try again.]`
+    );
+  });
+
+  it("succeeds for private github release tarballs when including token", async () => {
+    let projectDir = await getProjectDir("private-release-tarball-with-token");
+    await run([
+      "create",
+      projectDir,
+      "--template",
+      "https://example.com/remix-stack.tar.gz",
+      "--no-install",
+      "--typescript",
+      "--token",
+      "valid-token",
+    ]);
+    expect(output.trim()).toBe(
+      getOptOutOfInstallMessage() +
+        "\n\n" +
+        getSuccessMessage(
+          path.join("<TEMP_DIR>", "private-release-tarball-with-token")
+        )
     );
     expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
     expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
@@ -261,7 +337,7 @@ describe("the create command", () => {
     expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
   });
 
-  it("converts a template to javascript", async () => {
+  it("converts a template to JavaScript", async () => {
     let projectDir = await getProjectDir("template-to-js");
     await run([
       "create",
@@ -276,9 +352,8 @@ describe("the create command", () => {
         "\n\n" +
         getSuccessMessage(path.join("<TEMP_DIR>", "template-to-js"))
     );
-    expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
-    expect(fse.existsSync(path.join(projectDir, "app/root.jsx"))).toBeTruthy();
     expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeFalsy();
+    expect(fse.existsSync(path.join(projectDir, "app/root.jsx"))).toBeTruthy();
     expect(fse.existsSync(path.join(projectDir, "tsconfig.json"))).toBeFalsy();
     expect(fse.existsSync(path.join(projectDir, "jsconfig.json"))).toBeTruthy();
     let jsconfig = json5.parse(
@@ -381,6 +456,24 @@ describe("the create command", () => {
     expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeFalsy();
   });
 
+  it("runs remix.init script when using index.ts", async () => {
+    let projectDir = await getProjectDir("remix-init-ts");
+    await run([
+      "create",
+      projectDir,
+      "--template",
+      path.join(__dirname, "fixtures", "stack-init-ts.tar.gz"),
+      "--install",
+      "--typescript",
+    ]);
+    expect(output).toContain(
+      `Running init script on ${projectDir.replace(TEMP_DIR, "<TEMP_DIR>")}`
+    );
+    expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
+    expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
+    expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeFalsy();
+  });
+
   it("runs remix.init script when using `remix init`", async () => {
     let projectDir = await getProjectDir("remix-init-manual");
     await run([
@@ -405,7 +498,30 @@ describe("the create command", () => {
     expect(fse.existsSync(path.join(projectDir, "package.json"))).toBeTruthy();
     expect(fse.existsSync(path.join(projectDir, "app/root.tsx"))).toBeTruthy();
     expect(fse.existsSync(path.join(projectDir, "test.txt"))).toBeTruthy();
-    // if you run `remix init` keep around the remix.init directory for future use
+    expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeFalsy();
+  });
+
+  it("It keeps the `remix.init` script when using the `--no-delete` flag", async () => {
+    let projectDir = await getProjectDir("remix-init-manual");
+    await run([
+      "create",
+      projectDir,
+      "--template",
+      path.join(__dirname, "fixtures", "successful-remix-init.tar.gz"),
+      "--no-install",
+      "--typescript",
+    ]);
+    expect(output.trim()).toBe(
+      getOptOutOfInstallMessage() +
+        "\n\n" +
+        getSuccessMessage(path.join("<TEMP_DIR>", "remix-init-manual"))
+    );
+
+    output = "";
+    process.chdir(projectDir);
+    await run(["init", "--no-delete"]);
+
+    expect(output).toBe("");
     expect(fse.existsSync(path.join(projectDir, "remix.init"))).toBeTruthy();
   });
 
@@ -548,16 +664,21 @@ describe("the create command", () => {
   describe("errors", () => {
     it("identifies when a github repo is not accessible (403)", async () => {
       let projectDir = await getProjectDir("repo");
-      await expect(() =>
-        run([
-          "create",
-          projectDir,
-          "--template",
-          "error-username/403",
-          "--no-install",
-          "--typescript",
-        ])
-      ).rejects.toMatchInlineSnapshot(
+      await expect(async () => {
+        try {
+          let res = await run([
+            "create",
+            projectDir,
+            "--template",
+            "error-username/403",
+            "--no-install",
+            "--typescript",
+          ]);
+          return res;
+        } catch (err) {
+          throw err;
+        }
+      }).rejects.toMatchInlineSnapshot(
         `[Error: 🚨 The template could not be verified because you do not have access to the repository. Please double check the access rights of this repo and try again.]`
       );
     });
