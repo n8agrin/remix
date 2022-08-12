@@ -2,7 +2,6 @@ import tsConfigPaths from "tsconfig-paths";
 
 export function createMatchPath(tsconfigPath: string | undefined) {
   let configLoaderResult = tsConfigPaths.loadConfig(tsconfigPath);
-  console.log("debug: ", { configLoaderResult });
 
   if (configLoaderResult.resultType === "failed") {
     throw new Error(`🚨 Oops! ${configLoaderResult.message}`);
