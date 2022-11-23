@@ -21,6 +21,10 @@ describe("readConfig", () => {
         serverBuildPath: expect.any(String),
         assetsBuildDirectory: expect.any(String),
         relativeAssetsBuildDirectory: expect.any(String),
+        tsconfigPath: expect.any(String),
+        future: {
+          v2_meta: expect.any(Boolean),
+        },
       },
       `
       Object {
@@ -31,6 +35,9 @@ describe("readConfig", () => {
         "devServerPort": Any<Number>,
         "entryClientFile": "entry.client.tsx",
         "entryServerFile": "entry.server.tsx",
+        "future": Object {
+          "v2_meta": Any<Boolean>,
+        },
         "mdx": undefined,
         "publicPath": "/build/",
         "relativeAssetsBuildDirectory": Any<String>,
@@ -50,6 +57,7 @@ describe("readConfig", () => {
         "serverMode": "production",
         "serverModuleFormat": "cjs",
         "serverPlatform": "node",
+        "tsconfigPath": Any<String>,
         "watchPaths": Array [],
       }
     `

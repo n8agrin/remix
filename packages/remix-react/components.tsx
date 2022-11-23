@@ -20,11 +20,11 @@ import {
   useResolvedPath,
 } from "react-router-dom";
 import type { LinkProps, NavLinkProps } from "react-router-dom";
-import type { Merge } from "type-fest";
 import { createPath } from "history";
+import type { SerializeFrom } from "@remix-run/server-runtime";
 
 import type { AppData, FormEncType, FormMethod } from "./data";
-import type { EntryContext, AssetsManifest } from "./entry";
+import type { AssetsManifest, EntryContext, FutureConfig } from "./entry";
 import type { AppState, SerializedError } from "./errors";
 import {
   RemixRootDefaultErrorBoundary,
@@ -48,7 +48,12 @@ import { createClientRoutes } from "./routes";
 import type { RouteData } from "./routeData";
 import type { RouteMatch as BaseRouteMatch } from "./routeMatching";
 import { matchClientRoutes } from "./routeMatching";
-import type { RouteModules, HtmlMetaDescriptor } from "./routeModules";
+import type {
+  RouteModules,
+  RouteMatchWithMeta,
+  V1_HtmlMetaDescriptor,
+  V2_HtmlMetaDescriptor,
+} from "./routeModules";
 import { createTransitionManager } from "./transition";
 import type {
   Transition,
@@ -71,6 +76,7 @@ interface RemixEntryContextType {
   serverHandoffString?: string;
   clientRoutes: ClientRoute[];
   transitionManager: ReturnType<typeof createTransitionManager>;
+  future: FutureConfig;
 }
 
 export const RemixEntryContext = React.createContext<
@@ -195,6 +201,7 @@ export function RemixEntry({
         routeData: loaderData,
         actionData,
         transitionManager,
+        future: entryContext.future,
       }}
     >
       <RemixErrorBoundary
@@ -693,11 +700,11 @@ function PrefetchPageLinksImpl({
  *
  * @see https://remix.run/api/remix#meta-links-scripts
  */
-export function Meta() {
+function V1Meta() {
   let { matches, routeData, routeModules } = useRemixEntryContext();
   let location = useLocation();
 
-  let meta: HtmlMetaDescriptor = {};
+  let meta: V1_HtmlMetaDescriptor = {};
   let parentsData: { [routeId: string]: AppData } = {};
 
   for (let match of matches) {
@@ -710,8 +717,26 @@ export function Meta() {
     if (routeModule.meta) {
       let routeMeta =
         typeof routeModule.meta === "function"
-          ? routeModule.meta({ data, parentsData, params, location })
+          ? routeModule.meta({
+              data,
+              parentsData,
+              params,
+              location,
+              matches: undefined as any,
+            })
           : routeModule.meta;
+      if (routeMeta && Array.isArray(routeMeta)) {
+        throw new Error(
+          "The route at " +
+            match.route.path +
+            " returns an array. This is only supported with the `v2_meta` future flag " +
+            "in the Remix config. Either set the flag to `true` or update the route's " +
+            "meta function to return an object." +
+            "\n\nTo reference the v1 meta function API, see https://remix.run/api/conventions#meta"
+          // TODO: Add link to the docs once they are written
+          // + "\n\nTo reference future flags and the v2 meta API, see https://remix.run/api/remix#future-v2-meta."
+        );
+      }
       Object.assign(meta, routeMeta);
     }
 
@@ -735,7 +760,22 @@ export function Meta() {
 
         // Open Graph tags use the `property` attribute, while other meta tags
         // use `name`. See https://ogp.me/
-        let isOpenGraphTag = name.startsWith("og:");
+        //
+        // Namespaced attributes:
+        //  - https://ogp.me/#type_music
+        //  - https://ogp.me/#type_video
+        //  - https://ogp.me/#type_article
+        //  - https://ogp.me/#type_book
+        //  - https://ogp.me/#type_profile
+        //
+        // Facebook specific tags begin with `fb:` and also use the `property`
+        // attribute.
+        //
+        // Twitter specific tags begin with `twitter:` but they use `name`, so
+        // they are excluded.
+        let isOpenGraphTag =
+          /^(og|music|video|article|book|profile|fb):.+$/.test(name);
+
         return [value].flat().map((content) => {
           if (isOpenGraphTag) {
             return (
@@ -756,6 +796,92 @@ export function Meta() {
       })}
     </>
   );
+}
+
+function V2Meta() {
+  let { matches, routeData, routeModules } = useRemixEntryContext();
+  let location = useLocation();
+
+  let meta: V2_HtmlMetaDescriptor[] = [];
+  let parentsData: { [routeId: string]: AppData } = {};
+
+  let matchesWithMeta: RouteMatchWithMeta<ClientRoute>[] = matches.map(
+    (match) => ({ ...match, meta: [] })
+  );
+
+  let index = -1;
+  for (let match of matches) {
+    index++;
+    let routeId = match.route.id;
+    let data = routeData[routeId];
+    let params = match.params;
+
+    let routeModule = routeModules[routeId];
+
+    let routeMeta: V2_HtmlMetaDescriptor[] | V1_HtmlMetaDescriptor | undefined =
+      [];
+
+    if (routeModule?.meta) {
+      routeMeta =
+        typeof routeModule.meta === "function"
+          ? routeModule.meta({
+              data,
+              parentsData,
+              params,
+              location,
+              matches: matchesWithMeta,
+            })
+          : routeModule.meta;
+    }
+
+    routeMeta = routeMeta || [];
+    if (!Array.isArray(routeMeta)) {
+      throw new Error(
+        "The `v2_meta` API is enabled in the Remix config, but the route at " +
+          match.route.path +
+          " returns an invalid value. In v2, all route meta functions must " +
+          "return an array of meta objects." +
+          // TODO: Add link to the docs once they are written
+          // "\n\nTo reference future flags and the v2 meta API, see https://remix.run/api/remix#future-v2-meta." +
+          "\n\nTo reference the v1 meta function API, see https://remix.run/api/conventions#meta"
+      );
+    }
+
+    matchesWithMeta[index].meta = routeMeta;
+    meta = routeMeta;
+    parentsData[routeId] = data;
+  }
+
+  return (
+    <>
+      {meta.flat().map((metaProps) => {
+        if (!metaProps) {
+          return null;
+        }
+
+        if ("title" in metaProps) {
+          return <title key="title">{String(metaProps.title)}</title>;
+        }
+
+        if ("charSet" in metaProps || "charset" in metaProps) {
+          // TODO: We normalize this for the user in v1, but should we continue
+          // to do that? Seems like a nice convenience IMO.
+          return (
+            <meta
+              key="charset"
+              charSet={metaProps.charSet || (metaProps as any).charset}
+            />
+          );
+        }
+        return <meta key={JSON.stringify(metaProps)} {...metaProps} />;
+      })}
+    </>
+  );
+}
+
+export function Meta() {
+  let { future } = useRemixEntryContext();
+  return future.v2_meta ? <V2Meta /> : <V1Meta />;
 }
 
 /**
@@ -816,7 +942,7 @@ import * as route${index} from ${JSON.stringify(
 window.__remixRouteModules = {${matches
       .map((match, index) => `${JSON.stringify(match.route.id)}:route${index}`)
       .join(",")}};
-      
+
 import(${JSON.stringify(manifest.entry.module)});`;
 
     return (
@@ -865,6 +991,11 @@ import(${JSON.stringify(manifest.entry.module)});`;
 
   return (
     <>
+      <link
+        rel="modulepreload"
+        href={manifest.url}
+        crossOrigin={props.crossOrigin}
+      />
       <link
         rel="modulepreload"
         href={manifest.entry.module}
@@ -983,7 +1114,13 @@ let FormImpl = React.forwardRef<HTMLFormElement, FormImplProps>(
                 let submitter = (event as unknown as HTMLSubmitEvent)
                   .nativeEvent.submitter as HTMLFormSubmitter | null;
 
-                submit(submitter || event.currentTarget, { method, replace });
+                let submitMethod =
+                  (submitter?.formMethod as FormMethod | undefined) || method;
+
+                submit(submitter || event.currentTarget, {
+                  method: submitMethod,
+                  replace,
+                });
               }
         }
         {...props}
@@ -1013,7 +1150,7 @@ export function useFormAction(
   method: FormMethod = "get"
 ): string {
   let { id } = useRemixRouteContext();
-  let resolvedPath = useResolvedPath(action ?? ".");
+  let resolvedPath = useResolvedPath(action ? action : ".");
 
   // Previously we set the default action to ".". The problem with this is that
   // `useResolvedPath(".")` excludes search params and the hash of the resolved
@@ -1022,12 +1159,22 @@ export function useFormAction(
   // https://github.com/remix-run/remix/issues/927
   let location = useLocation();
   let { search, hash } = resolvedPath;
+  let isIndexRoute = id.endsWith("/index");
+
   if (action == null) {
     search = location.search;
     hash = location.hash;
+
+    // When grabbing search params from the URL, remove the automatically
+    // inserted ?index param so we match the useResolvedPath search behavior
+    // which would not include ?index
+    if (isIndexRoute) {
+      let params = new URLSearchParams(search);
+      params.delete("index");
+      search = params.toString() ? `?${params.toString()}` : "";
+    }
   }
 
-  let isIndexRoute = id.endsWith("/index");
   if ((action == null || action === ".") && isIndexRoute) {
     search = search ? search.replace(/^\?/, "?index&") : "?index";
   }
@@ -1211,13 +1358,29 @@ export function useSubmitImpl(key?: string): SubmitFunction {
       let url = new URL(action, `${protocol}//${host}`);
 
       if (method.toLowerCase() === "get") {
+        // Start with a fresh set of params and wipe out the old params to
+        // match default browser behavior
+        let params = new URLSearchParams();
+        let hasParams = false;
         for (let [name, value] of formData) {
           if (typeof value === "string") {
-            url.searchParams.append(name, value);
+            hasParams = true;
+            params.append(name, value);
           } else {
             throw new Error(`Cannot submit binary form data using GET`);
           }
         }
+
+        // Preserve any incoming ?index param for fetcher GET submissions
+        let isIndexAction = new URLSearchParams(url.search)
+          .getAll("index")
+          .some((v) => v === "");
+        if (key != null && isIndexAction) {
+          hasParams = true;
+          params.append("index", "");
+        }
+
+        url.search = hasParams ? `?${params.toString()}` : "";
       }
 
       let submission: Submission = {
@@ -1283,7 +1446,9 @@ function isInputElement(object: any): object is HTMLInputElement {
  *
  * @see https://remix.run/api/remix#usebeforeunload
  */
-export function useBeforeUnload(callback: () => any): void {
+export function useBeforeUnload(
+  callback: (event: BeforeUnloadEvent) => any
+): void {
   React.useEffect(() => {
     window.addEventListener("beforeunload", callback);
     return () => {
@@ -1351,77 +1516,7 @@ export function useMatches(): RouteMatch[] {
  *
  * @see https://remix.run/api/remix#useloaderdata
  */
-
-export type TypedResponse<T> = Response & {
-  json(): Promise<T>;
-};
-
-type DataFunction = (...args: any[]) => unknown; // matches any function
-type DataOrFunction = AppData | DataFunction;
-type JsonPrimitives =
-  | string
-  | number
-  | boolean
-  | String
-  | Number
-  | Boolean
-  | null;
-type NonJsonPrimitives = undefined | Function | symbol;
-
-type SerializeType<T> = T extends JsonPrimitives
-  ? T
-  : T extends NonJsonPrimitives
-  ? never
-  : T extends { toJSON(): infer U }
-  ? U
-  : T extends []
-  ? []
-  : T extends [unknown, ...unknown[]]
-  ? {
-      [k in keyof T]: T[k] extends NonJsonPrimitives
-        ? null
-        : SerializeType<T[k]>;
-    }
-  : T extends ReadonlyArray<infer U>
-  ? (U extends NonJsonPrimitives ? null : SerializeType<U>)[]
-  : T extends object
-  ? SerializeObject<UndefinedOptionals<T>>
-  : never;
-
-type SerializeObject<T> = {
-  [k in keyof T as T[k] extends NonJsonPrimitives ? never : k]: SerializeType<
-    T[k]
-  >;
-};
-
-/*
- * For an object T, if it has any properties that are a union with `undefined`,
- * make those into optional properties instead.
- *
- * Example: { a: string | undefined} --> { a?: string}
- */
-type UndefinedOptionals<T extends object> = Merge<
-  {
-    // Property is not a union with `undefined`, keep as-is
-    [k in keyof T as undefined extends T[k] ? never : k]: T[k];
-  },
-  {
-    // Property _is_ a union with `defined`. Set as optional (via `?`) and remove `undefined` from the union
-    [k in keyof T as undefined extends T[k] ? k : never]?: Exclude<
-      T[k],
-      undefined
-    >;
-  }
->;
-
-export type UseDataFunctionReturn<T extends DataOrFunction> = T extends (
-  ...args: any[]
-) => infer Output
-  ? Awaited<Output> extends TypedResponse<infer U>
-    ? SerializeType<U>
-    : SerializeType<Awaited<ReturnType<T>>>
-  : SerializeType<Awaited<T>>;
-export function useLoaderData<T = AppData>(): UseDataFunctionReturn<T> {
+export function useLoaderData<T = AppData>(): SerializeFrom<T> {
   return useRemixRouteContext().data;
 }
 
@@ -1430,9 +1525,7 @@ export function useLoaderData<T = AppData>(): UseDataFunctionReturn<T> {
  *
  * @see https://remix.run/api/remix#useactiondata
  */
-export function useActionData<T = AppData>():
-  | UseDataFunctionReturn<T>
-  | undefined {
+export function useActionData<T = AppData>(): SerializeFrom<T> | undefined {
   let { id: routeId } = useRemixRouteContext();
   let { transitionManager } = useRemixEntryContext();
   let { actionData } = transitionManager.getState();
@@ -1477,7 +1570,9 @@ export type FetcherWithComponents<TData> = Fetcher<TData> & {
  *
  * @see https://remix.run/api/remix#usefetcher
  */
-export function useFetcher<TData = any>(): FetcherWithComponents<TData> {
+export function useFetcher<TData = any>(): FetcherWithComponents<
+  SerializeFrom<TData>
+> {
   let { transitionManager } = useRemixEntryContext();
 
   let [key] = React.useState(() => String(++fetcherId));
@@ -1487,7 +1582,7 @@ export function useFetcher<TData = any>(): FetcherWithComponents<TData> {
   });
   let submit = useSubmitImpl(key);
 
-  let fetcher = transitionManager.getFetcher<TData>(key);
+  let fetcher = transitionManager.getFetcher<SerializeFrom<TData>>(key);
 
   let fetcherWithComponents = React.useMemo(
     () => ({

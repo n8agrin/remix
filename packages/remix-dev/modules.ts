@@ -2,6 +2,10 @@ declare module "*.aac" {
   let asset: string;
   export default asset;
 }
+declare module "*.avif" {
+  let asset: string;
+  export default asset;
+}
 declare module "*.css" {
   let asset: string;
   export default asset;
@@ -80,6 +84,10 @@ declare module "*.ttf" {
   let asset: string;
   export default asset;
 }
+declare module "*.wasm" {
+  let asset: string;
+  export default asset;
+}
 declare module "*.wav" {
   let asset: string;
   export default asset;
@@ -101,6 +109,10 @@ declare module "*.woff2" {
   export default asset;
 }
 declare module "*.webmanifest" {
+  let asset: string;
+  export default asset;
+}
+declare module "*.zip" {
   let asset: string;
   export default asset;
 }

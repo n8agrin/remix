@@ -3,6 +3,7 @@ import type * as esbuild from "esbuild";
 
 export const loaders: { [ext: string]: esbuild.Loader } = {
   ".aac": "file",
+  ".avif": "file",
   ".css": "file",
   ".eot": "file",
   ".flac": "file",
@@ -29,12 +30,14 @@ export const loaders: { [ext: string]: esbuild.Loader } = {
   ".ts": "ts",
   ".tsx": "tsx",
   ".ttf": "file",
+  ".wasm": "file",
   ".wav": "file",
   ".webm": "file",
   ".webmanifest": "file",
   ".webp": "file",
   ".woff": "file",
   ".woff2": "file",
+  ".zip": "file",
 };
 
 export function getLoaderForFile(file: string): esbuild.Loader {
