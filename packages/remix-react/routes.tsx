@@ -3,9 +3,9 @@ import type {
   ActionFunction,
   DataRouteObject,
   LoaderFunction,
-  ShouldRevalidateFunction,
 } from "react-router-dom";
 import { redirect } from "react-router-dom";
+import type { InternalShouldRevalidateFunction } from "@remix-run/router/dist/utils";
 
 import type { RouteModules } from "./routeModules";
 import { loadRouteModule } from "./routeModules";
@@ -176,10 +176,10 @@ function createShouldRevalidate(
   route: EntryRoute,
   routeModules: RouteModules,
   needsRevalidation?: Set<string>
-): ShouldRevalidateFunction {
+): InternalShouldRevalidateFunction {
   let handledRevalidation = false;
-  return function (arg) {
-    let module = routeModules[route.id];
+  return async function (arg) {
+    let module = await loadRouteModule(route, routeModules);
     invariant(module, `Expected route module to be loaded for ${route.id}`);
 
     // When an HMR / HDR update happens we opt out of all user-defined

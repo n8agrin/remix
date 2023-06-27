@@ -529,31 +529,42 @@ function PrefetchPageLinksImpl({
   let { manifest } = useRemixContext();
   let { matches } = useDataRouterStateContext();
 
-  let newMatchesForData = React.useMemo(
-    () =>
-      getNewMatchesForLinks(
-        page,
-        nextMatches,
-        matches,
-        manifest,
-        location,
-        "data"
-      ),
-    [page, nextMatches, matches, manifest, location]
-  );
+  let [newMatchesForData, setNewMatchesForData] = React.useState<
+    AgnosticDataRouteMatch[]
+  >([]);
+  let [newMatchesForAssets, setNewMatchesForAssets] = React.useState<
+    AgnosticDataRouteMatch[]
+  >([]);
 
-  let newMatchesForAssets = React.useMemo(
-    () =>
-      getNewMatchesForLinks(
-        page,
-        nextMatches,
-        matches,
-        manifest,
-        location,
-        "assets"
-      ),
-    [page, nextMatches, matches, manifest, location]
-  );
+  React.useEffect(() => {
+    let loadNewMatches = async () =>
+      setNewMatchesForData(
+        await getNewMatchesForLinks(
+          page,
+          nextMatches,
+          matches,
+          manifest,
+          location,
+          "data"
+        )
+      );
+    loadNewMatches();
+  }, [location, manifest, matches, nextMatches, page]);
+
+  React.useEffect(() => {
+    let loadNewMatchesForAssets = async () =>
+      setNewMatchesForAssets(
+        await getNewMatchesForLinks(
+          page,
+          nextMatches,
+          matches,
+          manifest,
+          location,
+          "assets"
+        )
+      );
+    loadNewMatchesForAssets();
+  }, [location, manifest, matches, nextMatches, page]);
 
   let dataHrefs = React.useMemo(
     () => getDataLinkHrefs(page, newMatchesForData, manifest),

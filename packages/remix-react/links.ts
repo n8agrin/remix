@@ -345,15 +345,14 @@ export async function getStylesheetPrefetchLinks(
     );
 }
 
-// This is ridiculously identical to transition.ts `filterMatchesToLoad`
-export function getNewMatchesForLinks(
+export async function getNewMatchesForLinks(
   page: string,
   nextMatches: AgnosticDataRouteMatch[],
   currentMatches: AgnosticDataRouteMatch[],
   manifest: AssetsManifest,
   location: Location,
   mode: "data" | "assets"
-): AgnosticDataRouteMatch[] {
+): Promise<AgnosticDataRouteMatch[]> {
   let path = parsePathPatch(page);
 
   let isNew = (match: AgnosticDataRouteMatch, index: number) => {
@@ -372,13 +371,19 @@ export function getNewMatchesForLinks(
     );
   };
 
+  let asyncFilter = async (
+    arr: AgnosticDataRouteMatch[],
+    predicate: (match: AgnosticDataRouteMatch, i: number) => Promise<boolean>
+  ) => {
+    let results = await Promise.all(arr.map(predicate));
+    return arr.filter((_v, index) => results[index]);
+  };
+
   // NOTE: keep this mostly up-to-date w/ the transition data diff, but this
   // version doesn't care about submissions
   let newMatches =
     mode === "data" && location.search !== path.search
-      ? // this is really similar to stuff in transition.ts, maybe somebody smarter
-        // than me (or in less of a hurry) can share some of it. You're the best.
-        nextMatches.filter((match, index) => {
+      ? await asyncFilter(nextMatches, async (match, index) => {
           let manifestRoute = manifest.routes[match.route.id];
           if (!manifestRoute.hasLoader) {
             return false;
@@ -389,7 +394,7 @@ export function getNewMatchesForLinks(
           }
 
           if (match.route.shouldRevalidate) {
-            let routeChoice = match.route.shouldRevalidate({
+            let routeChoice = await match.route.shouldRevalidate({
               currentUrl: new URL(
                 location.pathname + location.search + location.hash,
                 window.origin
